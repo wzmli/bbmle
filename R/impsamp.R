@@ -14,124 +14,114 @@
 #' @references Gill, Jeff, and Gary King. "What to Do When Your Hessian Is Not Invertible: Alternatives to Model Respecification in Nonlinear Estimation." Sociological Methods & Research 33, no. 1 (2004): 54-87.
 #' Lande, Russ and Steinar Engen and Bernt-Erik Saether, Stochastic Population Dynamics in Ecology and Conservation. Oxford University Press, 2003.
 
-pop_pred_samp <- function(object,
-                     n=1000,
-                     n_imp=n*10,
-                     return_wts=FALSE,
-                     impsamp=FALSE,
-                     PDify=FALSE,
-                     PDmethod=NULL,
-                     tol = 1e-6,
-                     return_all=FALSE,
-                     rmvnorm_method=c("mvtnorm","MASS"),
-                     fix_params=NULL) {
-
-    rmvnorm_method <- match.arg(rmvnorm_method)
-    
-    min_eval <- function(x) {
-        ev <- eigen(x,only.values=TRUE)$values
-        if (is.complex(ev)) {
-            print(x)
-            print(ev)
-            stop("covariance matrix with complex eigenvalues (!)")
-        }
-        min(ev)
+pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, impsamp = FALSE, 
+                           PDify = FALSE, PDmethod = NULL, tol = 1e-06, return_all = FALSE, 
+                           rmvnorm_method = c("mvtnorm", "MASS"), fix_params = NULL, 
+                           t_dist = FALSE,
+                           diagmat = FALSE) 
+{
+  rmvnorm_method <- match.arg(rmvnorm_method)
+  min_eval <- function(x) {
+    ev <- eigen(x, only.values = TRUE)$values
+    if (is.complex(ev)) {
+      print(x)
+      print(ev)
+      stop("covariance matrix with complex eigenvalues (!)")
     }
-
-    ## extract var-cov,
-    cc_full <- object@fullcoef ## full parameters
-    cc <- object@coef ## varying parameters only
-    keep_params <- !names(cc) %in% fix_params
-
-    cc <- cc[keep_params]
-    vv <- vcov(object)
-    vv <- vv[keep_params,keep_params]
-
-    Lfun <- object@minuslogl
-    fixed_pars <- setdiff(names(object@fullcoef),names(cc))
-    res <- matrix(NA,nrow=n,ncol=length(cc_full),
-                  dimnames=list(NULL,names(cc_full)))
-    if (any(is.na(cc))) return(res)  ## bail out if coefs are NA
-
-    ## try to fix bad covariance matrices
-    bad_vcov <- any(is.na(vv))
-    if (!bad_vcov) {
-        min_eig <- min_eval(vv)
-    } else {
-        min_eig <- NA
-    }
-    if (is.na(min_eig) || any(min_eig<tol)) {
-        if (!PDify) {
-            stop("NA or non-positive definitive variance-covariance matrix ",
-                 sprintf("(min eig=%f): ",min_eig),
-                 "consider PDify=TRUE (and probably impsamp=TRUE)")
-        }
-        ## use King 1994 to 'posdefify' variance-covariance matrix
-        ## (better than e.g. Matrix::nearPD)
-        hh <- object@details$hessian[keep_params,keep_params]
-        if (any(is.na(hh))) {
-            warning("NA values in Hessian set to zero: check results *very* carefully!") 
-            hh[is.na(hh)] <- 0 # !! questionable
-        }
-        if ((is.null(PDmethod) && bad_vcov) ||
-            identical(PDmethod,"King")) {
-            ## ONLY use this
-            warning("using EXPERIMENTAL King et al method")
-            ## semi definite: use King et al method
-            ## (we may need this when semidefinite, because
-            ##  we couldn't invert H in the first place ... nearPD
-            ##  wants to take a non-pos-def matrix and PDify it.
-            ##  (perhaps we could PDify the Hessian and then invert it ???
-            vv <- crossprod(as.matrix(bdsmatrix::gchol(MASS::ginv(hh)),
-                                      ones = FALSE))
-        } else {
-            vv <- as.matrix(Matrix::nearPD(vv)$mat)
-        }
-    }
-
-    mv_n <- if (impsamp) n_imp else n  ## take more samples if actually sampling
-
-    ## draw MVN samples
-    res[,names(cc)] <- mv_vals <- switch(rmvnorm_method,
-                                         mvtnorm=mvtnorm::rmvnorm(mv_n, mean=cc, sigma=vv),
-                                         MASS=MASS::mvrnorm(mv_n, mu=cc, Sigma=vv))
-    ## fill in fixed parameters as necessary
-    if (length(fixed_pars)>0) {
-        for (p in fixed_pars) {
-            res[,p] <- object@fullcoef[p]
-        }
-    }
-    if (!(impsamp || return_wts)) return(res)  ## done
-    
-    ## compute MV sampling probabilities
-    mv_wts <- mvtnorm::dmvnorm(mv_vals,mean=cc,sigma=vv,log=TRUE)
-    if (all(is.na(mv_wts)) && length(mv_wts)==1) {
-        ## work around emdbook bug
-        mv_wts <- rep(NA,length(mv_vals))
-        warning("can't compute MV sampling probabilities")
-    }
-    
-    ## compute **log**-likelihoods of each sample point (Lfun is negative LL)
-    L_wts0 <- -1*apply(res,1,Lfun)
-    ## shift negative log-likelihoods (avoid underflow);
-    ## find scaled likelihood
-    L_wts <- L_wts0 - mv_wts ## subtract log samp prob
-    L_wts <- exp(L_wts - max(L_wts,na.rm=TRUE))
-    L_wts <- L_wts/sum(L_wts,na.rm=TRUE)
-    eff_samp <- 1/sum(L_wts^2,na.rm=TRUE)  ## check ???
-    res <- cbind(res,wts=L_wts)
-    attr(res,"eff_samp") <- eff_samp
-    ## FIXME: warn if eff_samp is low?
-    if (return_all) {
-        return(cbind(res,loglik=L_wts0,mvnloglik=mv_wts))
-    }
-    if (return_wts) return(res)
-    ## do importance sampling
-    res <- res[sample(seq(nrow(res)),
-                              size=n,
-                              prob=L_wts,
-                              replace=TRUE),]
+    min(ev)
+  }
+  cc_full <- object@fullcoef
+  cc <- object@coef
+  keep_params <- !names(cc) %in% fix_params
+  cc <- cc[keep_params]
+  vv <- vcov(object)
+  vv <- vv[keep_params, keep_params]
+  Lfun <- object@minuslogl
+  fixed_pars <- setdiff(names(object@fullcoef), names(cc))
+  res <- matrix(NA, nrow = n, ncol = length(cc_full), dimnames = list(NULL, 
+                                                                      names(cc_full)))
+  if (any(is.na(cc))) 
     return(res)
+  bad_vcov <- any(is.na(vv))
+  if (!bad_vcov) {
+    min_eig <- min_eval(vv)
+  }
+  else {
+    min_eig <- NA
+  }
+  if (is.na(min_eig) || any(min_eig < tol)) {
+    if (!PDify) {
+      stop("NA or non-positive definitive variance-covariance matrix ", 
+           sprintf("(min eig=%f): ", min_eig), "consider PDify=TRUE (and probably impsamp=TRUE)")
+    }
+    hh <- object@details$hessian[keep_params, keep_params]
+    if (any(is.na(hh))) {
+      warning("NA values in Hessian set to zero: check results *very* carefully!")
+      hh[is.na(hh)] <- 0
+    }
+    if ((is.null(PDmethod) && bad_vcov) || identical(PDmethod, 
+                                                     "King")) {
+      warning("using EXPERIMENTAL King et al method")
+      vv <- crossprod(as.matrix(bdsmatrix::gchol(MASS::ginv(hh)), 
+                                ones = FALSE))
+    }
+    else {
+      vv <- as.matrix(Matrix::nearPD(vv)$mat)
+    }
+  }
+  if (diagmat) {
+    vv <- vcov(object)
+    vv <- vv[keep_params, keep_params]
+    vv <- diag(diag(vv))
+  }
+  mv_n <- if (impsamp) 
+    n_imp
+  else n
+  if(!t_dist){
+  res[, names(cc)] <- mv_vals <- switch(rmvnorm_method
+    , mvtnorm = mvtnorm::rmvnorm(mv_n
+      ,mean = cc, sigma = vv)
+    , MASS = MASS::mvrnorm(mv_n, mu = cc, Sigma = vv)
+    )
+  }
+  if(t_dist){
+    res[, names(cc)] <- mv_vals <- LaplacesDemon::rmvt(mv_n, mu=cc, S=vv, df=3)
+  }
+  if (length(fixed_pars) > 0) {
+    for (p in fixed_pars) {
+      res[, p] <- object@fullcoef[p]
+    }
+  }
+  if (!(impsamp || return_wts)) 
+    return(res)
+  if(!t_dist){
+    mv_wts <- mvtnorm::dmvnorm(mv_vals, mean = cc, sigma = vv, 
+                             log = TRUE)
+  }
+  if(t_dist){
+    mv_wts <- sapply(1:mv_n,function(x){
+      LaplacesDemon::dmvt(mv_val[x,], mu=cc, S=vv, df=3, log=TRUE)
+    })
+  }
+  if (all(is.na(mv_wts)) && length(mv_wts) == 1) {
+    mv_wts <- rep(NA, length(mv_vals))
+    warning("can't compute MV sampling probabilities")
+  }
+  L_wts0 <- -1 * apply(res, 1, Lfun)
+  L_wts <- L_wts0 - mv_wts
+  L_wts <- exp(L_wts - max(L_wts, na.rm = TRUE))
+  L_wts <- L_wts/sum(L_wts, na.rm = TRUE)
+  eff_samp <- 1/sum(L_wts^2, na.rm = TRUE)
+  res <- cbind(res, wts = L_wts)
+  attr(res, "eff_samp") <- eff_samp
+  if (return_all) {
+    return(cbind(res, loglik = L_wts0, mvnloglik = mv_wts))
+  }
+  if (return_wts) 
+    return(res)
+  res <- res[sample(seq(nrow(res)), size = n, prob = L_wts, 
+                    replace = TRUE), ]
+  return(res)
 }
     
 ## ## copy (!!) dmvnorm from emdbook to avoid cyclic dependency problems
