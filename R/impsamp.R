@@ -18,7 +18,11 @@ pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, imps
                            PDify = FALSE, PDmethod = NULL, tol = 1e-06, return_all = FALSE, 
                            rmvnorm_method = c("mvtnorm", "MASS"), fix_params = NULL, 
                            t_dist = FALSE,
-                           diagmat = FALSE) 
+                           diagmat = FALSE,
+                           vartimes = 1,
+                           sampwts = TRUE
+                           
+                           ) 
 {
   rmvnorm_method <- match.arg(rmvnorm_method)
   min_eval <- function(x) {
@@ -36,6 +40,12 @@ pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, imps
   cc <- cc[keep_params]
   vv <- vcov(object)
   vv <- vv[keep_params, keep_params]
+  if (diagmat) {
+    vv <- vcov(object)
+    vv <- vv[keep_params, keep_params]
+    vv <- diag(diag(vv))
+  }
+  vv <- vv*vartimes
   Lfun <- object@minuslogl
   fixed_pars <- setdiff(names(object@fullcoef), names(cc))
   res <- matrix(NA, nrow = n, ncol = length(cc_full), dimnames = list(NULL, 
@@ -69,11 +79,6 @@ pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, imps
       vv <- as.matrix(Matrix::nearPD(vv)$mat)
     }
   }
-  if (diagmat) {
-    vv <- vcov(object)
-    vv <- vv[keep_params, keep_params]
-    vv <- diag(diag(vv))
-  }
   mv_n <- if (impsamp) 
     n_imp
   else n
@@ -100,12 +105,15 @@ pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, imps
   }
   if(t_dist){
     mv_wts <- sapply(1:mv_n,function(x){
-      LaplacesDemon::dmvt(mv_val[x,], mu=cc, S=vv, df=3, log=TRUE)
+      LaplacesDemon::dmvt(mv_vals[x,], mu=cc, S=vv, df=3, log=TRUE)
     })
   }
   if (all(is.na(mv_wts)) && length(mv_wts) == 1) {
     mv_wts <- rep(NA, length(mv_vals))
     warning("can't compute MV sampling probabilities")
+  }
+  if(!sampwts){
+	mv_wts <- 0 
   }
   L_wts0 <- -1 * apply(res, 1, Lfun)
   L_wts <- L_wts0 - mv_wts
