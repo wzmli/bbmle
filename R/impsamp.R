@@ -17,6 +17,7 @@
 pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, impsamp = FALSE, 
                            PDify = FALSE, PDmethod = NULL, tol = 1e-06, return_all = FALSE, 
                            rmvnorm_method = c("mvtnorm", "MASS"), fix_params = NULL, 
+                           pseudoVar = FALSE,
                            t_dist = FALSE,
                            diagmat = FALSE,
                            vartimes = 1,
@@ -46,6 +47,9 @@ pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, imps
     vv <- diag(diag(vv))
   }
   vv <- vv*vartimes
+  if(!isSymmetric(vv)){
+    vv <- as.matrix(Matrix::nearPD(vv)$mat)
+  }
   Lfun <- object@minuslogl
   fixed_pars <- setdiff(names(object@fullcoef), names(cc))
   res <- matrix(NA, nrow = n, ncol = length(cc_full), dimnames = list(NULL, 
@@ -59,7 +63,7 @@ pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, imps
   else {
     min_eig <- NA
   }
-  if (is.na(min_eig) || any(min_eig < tol)) {
+  if (is.na(min_eig) || any(min_eig < 0)) {
     if (!PDify) {
       stop("NA or non-positive definitive variance-covariance matrix ", 
            sprintf("(min eig=%f): ", min_eig), "consider PDify=TRUE (and probably impsamp=TRUE)")
@@ -78,6 +82,16 @@ pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, imps
     else {
       vv <- as.matrix(Matrix::nearPD(vv)$mat)
     }
+  }
+  hh <- object@details$hessian[keep_params, keep_params]
+  if (any(is.na(hh))) {
+    warning("NA values in Hessian set to zero: check results *very* carefully!")
+    hh[is.na(hh)] <- 0
+  }
+  if (pseudoVar) {
+    warning("using EXPERIMENTAL King et al method")
+    vv <- crossprod(as.matrix(bdsmatrix::gchol(MASS::ginv(hh)), 
+                              ones = FALSE))
   }
   mv_n <- if (impsamp) 
     n_imp
@@ -120,7 +134,7 @@ pop_pred_samp <- function (object, n = 1000, n_imp = n, return_wts = FALSE, imps
   L_wts <- exp(L_wts - max(L_wts, na.rm = TRUE))
   L_wts <- L_wts/sum(L_wts, na.rm = TRUE)
   eff_samp <- 1/sum(L_wts^2, na.rm = TRUE)
-  res <- cbind(res, wts = L_wts)
+  res <- cbind(res, L_wts = L_wts0, samp_wts = mv_wts)
   attr(res, "eff_samp") <- eff_samp
   if (return_all) {
     return(cbind(res, loglik = L_wts0, mvnloglik = mv_wts))
